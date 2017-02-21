@@ -17,7 +17,6 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.AffineTransform;
-import java.awt.geom.Arc2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferStrategy;
 import java.lang.reflect.InvocationTargetException;
@@ -179,138 +178,46 @@ public class Ikkuna extends JFrame {
                     //PIIRTÄMINEN
                     if (nakyma.piirretaankoPeli()) {
                         piirraPeli(g2d, p_skaalaus, p_alkux, p_alkuy, p_sivux, p_sivuy);
+
+                        if (peli.onkoPelaajaElossa()) {
+                            piirraUI(g2d, p_skaalaus, p_alkux, p_alkuy, p_sivux, p_sivuy);
+                        } else {
+                            //pelaaja kuoli, piirretään ohjeet sitä varten
+                            g2d.setColor(Color.WHITE);
+                            g2d.setFont(new Font(Font.MONOSPACED, Font.BOLD, 20));
+                            g2d.drawString(
+                                "Paina R ja yritä uudestaan.",
+                                p_alkux + p_sivux * 0.2f,
+                                p_alkuy + p_sivuy * 0.9f);
+                        }
                     }
                     else {
                         piirraValikko(g2d, p_alkux, p_alkuy, p_sivux, p_sivuy);
                     }
 
+                    g2d.setColor(Color.RED);
+                    g2d.setFont(new Font("Monospaced", Font.BOLD, 16));
+                    //ruudun päivitysnopeus
+                    if (Asetukset.piirra_paivitysnopeus) {
+                        //g2d.drawString("FPS: " +paivitetyt_ruudut +  " Liike: " + liikkeen_paivitysnopeus, 50, 50);
+                        g2d.drawString(
+                            String.format(
+                                "FPS: %d Liike: %d",
+                                paivitetyt_ruudut,
+                                liikkeen_paivitysnopeus),
+                            50, 50);
+                    }
+                    //Pelaajan sijainti
+                    if (Asetukset.piirra_sijainti && nakyma.piirretaankoPeli()){
+                        g2d.drawString(String.format("X=%f Y=%f", peli.getPelaajaX(), peli.getPelaajaY()), 50, 70);
+                    }
+
+                    //piirtäminen valmista
+                    g2d.dispose();
                 } while (strategia.contentsRestored());
+
                 strategia.show();
             } while (strategia.contentsLost());
-            //piirretään valikko
-            {
-
-                //piirrä logo
-                Image logo = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, "otsikko");
-                AffineTransform aff = new AffineTransform();
-                aff.translate(p_pohjax + p_vsivux * 0.01, p_pohjay + p_vsivuy * 0.01);
-                final double kerroin = p_vsivux / logo.getWidth(null);
-                aff.scale(kerroin, kerroin);
-                g2d.drawImage(logo, aff, null);
-
-                //Piirrä valikon painikkeet
-                for (int i = 0; i < valikko.getPainikeLkm() ; i++) {
-                    if (valikko.onkoValittu(i)) {
-                        g2d.setFont(new Font(Font.DIALOG, Font.BOLD, 16));
-                    }
-                    else {
-                        g2d.setFont(new Font(Font.DIALOG, Font.PLAIN, 16));
-                    }
-                    //laske tekstin koko
-                    final String painiketeksti = valikko.getPainikeTeksti(i);
-                    FontMetrics fm = g2d.getFontMetrics();
-                    final double korkeus = fm.getAscent() + fm.getLeading();
-                    final double leveys = fm.stringWidth(painiketeksti);
-                    //piirrä näppäimen reunat
-                    g2d.draw(new Rectangle2D.Double(
-                            val_nappainalkux * 1.02, val_nappainalkuy + val_nappainkokoy * i,
-                            p_vsivux * 0.96, val_nappainkokoy * 0.96));
-                    //piirrä teksti
-                    g2d.drawString(
-                            painiketeksti,
-                            (float) (val_nappainalkux + val_nappainkokox / 2 - leveys / 2),
-                            (float) (val_nappainalkuy + val_nappainkokoy * i + val_nappainkokoy * 0.5 + korkeus / 2));
-                }
-                //Piirrä takaisin-painike
-                if (valikko.voikoPalataTaakse() || valikko.voikoPalataPeliin()) {
-                    if (valikko.getTakaisinValittu()) g2d.setFont(new Font(Font.DIALOG, Font.BOLD, 16));
-                    else g2d.setFont(new Font(Font.DIALOG, Font.PLAIN, 16));
-                    final String takaisin = "Takaisin";
-                    final double leveys = g2d.getFontMetrics().stringWidth(takaisin);
-                    g2d.drawString(
-                            takaisin,
-                            (float) (val_nappainalkux + p_vsivux / 2 - leveys / 2),
-                            (float) (val_nappainalkuy + val_nappainkokoy * 8.9));
-                }
-            }
-
-            //Piirrä UI
-            //Elämät
-            if (nakyma.piirretaankoPeli() && peli.onkoPelaajaElossa()) {
-                final Rectangle2D elama_pohja = new Rectangle2D.Double(
-                        p_alkux + 40 * p_skaalaus,
-                        p_alkuy + p_sivuy - 80 * p_skaalaus,
-                        400 * p_skaalaus, 40 * p_skaalaus);
-                final Color c = new Color(50, 50, 50, 180);
-                g2d.setColor(c);
-                g2d.fill(elama_pohja);
-                final Rectangle2D elama_palkki = new Rectangle2D.Double(
-                        p_alkux + (40 + 4) * p_skaalaus,
-                        p_alkuy + p_sivuy - (80 - 4) * p_skaalaus,
-                        ((400 - 8) * p_skaalaus) * peli.getPelaajaElamat(), (40 - 8) * p_skaalaus);
-                g2d.setColor(Color.red);
-                g2d.fill(elama_palkki);
-                //ammukset
-                if (peli.piirretaankoAmmusMaara()) {
-                    int ammuksetlkm = peli.getAmmustenMaara();
-                    int lippaatlkm = peli.getLippaidenMaara();
-                    g2d.setFont(new Font(Font.MONOSPACED, Font.BOLD, 25));
-                    if (peli.onkoAmmuksetVahissa()) g2d.setColor(Color.RED);
-                    else g2d.setColor(Color.WHITE);
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getLipasIkoni());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            p_alkux + p_sivux - 90 - img.getWidth(null) / 2,
-                            p_alkuy + p_sivuy - 50 - img.getHeight(null) / 2);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    for (int i = 0; i < lippaatlkm; i++) {
-                        aff.translate(23, 0);
-                        g2d.drawImage(img, aff, null);
-                    }
-                    g2d.drawString(
-                             ammuksetlkm + " / " + peli.getAmmustenMaaraMax(),
-                            (float) (p_alkux + p_sivux - 150 * p_skaalaus),
-                            (float) (p_alkuy + p_sivuy - 40 * p_skaalaus));
-                }
-            }
-            else if (nakyma.piirretaankoPeli()) {
-                g2d.setColor(Color.WHITE);
-                g2d.setFont(new Font(Font.MONOSPACED, Font.BOLD, 20));
-                g2d.drawString(
-                        "Paina R ja yritä uudestaan.",
-                        p_alkux + p_sivux * 0.2f,
-                        p_alkuy + p_sivuy * 0.9f);
-            }
-
-            g2d.setColor(Color.RED);
-            g2d.setFont(new Font("Monospaced", Font.BOLD, 16));
-            //Lyöntialueen visuaalinen testi
-            if (Asetukset.piirra_lyontitesti && nakyma.piirretaankoAmmukset()) {
-                g2d.draw(new Arc2D.Double(
-                        80, 80,
-                        40, 40,
-                        Math.toDegrees(-peli.getPelaajaSuunta()) - 50, 100,
-                        Arc2D.PIE));
-            }
-            //ruudun päivitysnopeus
-            if (Asetukset.piirra_paivitysnopeus) {
-                //g2d.drawString("FPS: " +paivitetyt_ruudut +  " Liike: " + liikkeen_paivitysnopeus, 50, 50);
-                g2d.drawString(String.format("FPS: %d Liike: %d", paivitetyt_ruudut, liikkeen_paivitysnopeus), 50, 50);
-            }
-            if (Asetukset.piirra_sijainti && nakyma.piirretaankoPeli()){
-                g2d.drawString(String.format("X=%f Y=%f", peli.getPelaajaX(), peli.getPelaajaY()), 50, 70);
-            }
-
-
-            //piirtäminen valmista, heitetään piirtämisjuttu roskiin ja näytetään lopputulos
-            g2d.dispose();
-            try {
-                strategia.show();
-            }
-            catch (IllegalStateException ise) {
-                System.out.println("Buffer-näyttövirhe @ " + System.currentTimeMillis() + " (" + ise.getMessage() + ")");
-                continue;
-            }
 
             //odotetaan hetki ennen seuraavaa päivitystä, jottei prosessorinkäyttö nouse liikaa
             if (Asetukset.rajoita_paivitysnopeutta) {
@@ -452,9 +359,94 @@ public class Ikkuna extends JFrame {
         val_nappainkokox = p_vsivux; //valikon näppäinten koko
         val_nappainkokoy = p_vsivuy * 0.08;
         g2d.setColor(Color.red);
+
         //piirrä pohja
         final Rectangle2D pohja = new Rectangle2D.Double(p_pohjax, p_pohjay, p_vsivux, p_vsivuy);
         g2d.draw(pohja);
+
+        //piirrä logo
+        Image logo = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, "otsikko");
+        AffineTransform aff = new AffineTransform();
+        aff.translate(p_pohjax + p_vsivux * 0.01, p_pohjay + p_vsivuy * 0.01);
+        final double kerroin = p_vsivux / logo.getWidth(null);
+        aff.scale(kerroin, kerroin);
+        g2d.drawImage(logo, aff, null);
+
+        //Piirrä valikon painikkeet
+        final Font valittu = new Font(Font.DIALOG, Font.BOLD, 16);
+        final Font normaali = new Font(Font.DIALOG, Font.PLAIN, 16);
+        for (int i = 0; i < valikko.getPainikeLkm() ; i++) {
+            if (valikko.onkoValittu(i)) {
+                g2d.setFont(valittu);
+            }
+            else {
+                g2d.setFont(normaali);
+            }
+            //laske tekstin koko
+            final String painiketeksti = valikko.getPainikeTeksti(i);
+            FontMetrics fm = g2d.getFontMetrics();
+            final double korkeus = fm.getAscent() + fm.getLeading();
+            final double leveys = fm.stringWidth(painiketeksti);
+            //piirrä näppäimen reunat
+            g2d.draw(new Rectangle2D.Double(
+                val_nappainalkux * 1.02, val_nappainalkuy + val_nappainkokoy * i,
+                p_vsivux * 0.96, val_nappainkokoy * 0.96));
+            //piirrä teksti
+            g2d.drawString(
+                painiketeksti,
+                (float) (val_nappainalkux + val_nappainkokox / 2 - leveys / 2),
+                (float) (val_nappainalkuy + val_nappainkokoy * i + val_nappainkokoy * 0.5 + korkeus / 2));
+        }
+        //Piirrä takaisin-painike
+        if (valikko.voikoPalataTaakse() || valikko.voikoPalataPeliin()) {
+            if (valikko.getTakaisinValittu()) g2d.setFont(valittu);
+            else g2d.setFont(normaali);
+            final String takaisin = "Takaisin";
+            final double leveys = g2d.getFontMetrics().stringWidth(takaisin);
+            g2d.drawString(
+                    takaisin,
+                    (float) (val_nappainalkux + p_vsivux / 2 - leveys / 2),
+                    (float) (val_nappainalkuy + val_nappainkokoy * 8.9));
+        }
+    }
+
+    public void piirraUI(Graphics2D g2d, double skaalaus, int alkux, int alkuy, int sivux, int sivuy) {
+        //Elämät
+        final Rectangle2D elama_pohja = new Rectangle2D.Double(
+                alkux + 40 * skaalaus,
+                alkuy + sivuy - 80 * skaalaus,
+                400 * skaalaus, 40 * skaalaus);
+        final Color c = new Color(50, 50, 50, 180);
+        g2d.setColor(c);
+        g2d.fill(elama_pohja);
+        final Rectangle2D elama_palkki = new Rectangle2D.Double(
+                alkux + (40 + 4) * skaalaus,
+                alkuy + sivuy - (80 - 4) * skaalaus,
+                ((400 - 8) * skaalaus) * peli.getPelaajaElamat(), (40 - 8) * skaalaus);
+        g2d.setColor(Color.red);
+        g2d.fill(elama_palkki);
+        //ammukset
+        if (peli.piirretaankoAmmusMaara()) {
+            int ammuksetlkm = peli.getAmmustenMaara();
+            int lippaatlkm = peli.getLippaidenMaara();
+            g2d.setFont(new Font(Font.MONOSPACED, Font.BOLD, 25));
+            if (peli.onkoAmmuksetVahissa()) g2d.setColor(Color.RED);
+            else g2d.setColor(Color.WHITE);
+            Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getLipasIkoni());
+            AffineTransform aff = new AffineTransform();
+            aff.translate(
+                alkux + sivux - 90 - img.getWidth(null) / 2,
+                alkuy + sivuy - 50 - img.getHeight(null) / 2);
+            aff.scale(skaalaus, skaalaus);
+            for (int i = 0; i < lippaatlkm; i++) {
+                aff.translate(23, 0);
+                g2d.drawImage(img, aff, null);
+            }
+            g2d.drawString(
+                ammuksetlkm + " / " + peli.getAmmustenMaaraMax(),
+               (float) (alkux + sivux - 150 * skaalaus),
+               (float) (alkuy + sivuy - 40 * skaalaus));
+        }
     }
 
     private int liikkeen_paivitysnopeus = 0;

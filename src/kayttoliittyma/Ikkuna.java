@@ -20,12 +20,13 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferStrategy;
+import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.zip.DataFormatException;
 import javax.swing.JFrame;
 import javax.swing.SwingUtilities;
 import kayttoliittyma.TekstuuriVarasto.Tyyppi;
-import logiikka.Koord;
 import logiikka.KoordSuunnalla;
 import peli.Peli;
 import valikko.ValikkoStack;
@@ -37,10 +38,10 @@ public class Ikkuna extends JFrame {
         //TODO: Tarvitaanko tosiaan kansi muuttujaa? Tuleeko näitä enemmänkin vai miten tän on tarkoitus toimia
         peli_nakyvissa(true, true),
         paavalikko(false, false);
-        
+
         private final boolean piirretaanko_peli;
         private final boolean piirretaanko_hud;
-        
+
         private IkkunanNakyma(boolean piirraPeli, boolean piirraHUD) {
             piirretaanko_peli = piirraPeli;
             piirretaanko_hud = piirraHUD;
@@ -55,15 +56,15 @@ public class Ikkuna extends JFrame {
             return !piirretaanko_hud && piirretaanko_peli;
         }
     }
-    
+
     private IkkunanNakyma nakyma = IkkunanNakyma.paavalikko;
     private Peli peli = null;
     private ValikkoStack valikko = new ValikkoStack(false);
     private final NappainKasittelija nappaimet = new NappainKasittelija();
-    
+
     private double ikkunan_keskusx = 0;
     private double ikkunan_keskusy = 0;
-    
+
     private Ikkuna() {
         //alustetaan ikkuna
         this.setSize(900, 700);
@@ -82,18 +83,18 @@ public class Ikkuna extends JFrame {
         this.setIgnoreRepaint(true);
         //näppäimenpainallukset ja vastaavat välitetään tälle JFramelle
         this.setFocusable(true);
-        
+
         //näppäinkäsittelijät
         this.addKeyListener(new NappainTapahtumat());
         this.addMouseListener(new HiiriTapahtumat());
     }
-    
+
     /** Avaa uusi ikkuna. Ikkuna avataan tällä metodilla, muuten se ei toimi oikein. */
     public static void uusiIkkuna() {
         //luodaan uusi ikkuna ja pistetään se näkyviin
         Ikkuna i = new Ikkuna();
         i.setVisible(true);
-        
+
         Thread piirto = new Thread("PiirtoThread") {
             @Override
             public void run() {
@@ -108,17 +109,18 @@ public class Ikkuna extends JFrame {
             }
         };
         liike.setDaemon(true);
-        
+
         piirto.setPriority(Thread.MAX_PRIORITY);
         piirto.start();
         liike.setPriority(Thread.MAX_PRIORITY - 1);
         liike.start();
     }
-    
+
     private double val_nappainalkux = 0;//valikon näppäinten aloituskohta
     private double val_nappainalkuy = 0;
     private double val_nappainkokox = 0;//valikon yksittäisen näppäimen koko
     private double val_nappainkokoy = 0;
+
     @SuppressWarnings("SleepWhileInLoop")
     private void piirtoLoop() {
         //Ensimmäisenä pitää luoda bufferointistrategia
@@ -128,203 +130,66 @@ public class Ikkuna extends JFrame {
                 new ImageCapabilities(true),
                 new ImageCapabilities(true),
                 BufferCapabilities.FlipContents.BACKGROUND);
-        while(true) {
-            try {
-                //tehdään edellisten capabilities-määritelmän mukainen strategia
-                this.createBufferStrategy(2, bufcap);
-                break;
-            } catch (AWTException | IllegalStateException ex) {
-                //kiihdytys ei jostain syystä onnistunut
-                //yritetään uudestaan
-                System.out.println("Kiihdytys ei onnistunut! " + ex.getMessage());
-            }
-        }
-        //haetaan äsken luotu strategia
-        BufferStrategy strategia = this.getBufferStrategy();
-        
+
+        BufferStrategy strategia = luoBufferointiStrategia(bufcap);
+
         final RenderingHints hints = new RenderingHints(
                 RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         hints.put(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         hints.put(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-        
+
         //piirtämisessä käytetyt grafiikat
-        Graphics2D g2d;
         long edell_sekunti = System.nanoTime();
         int paivitetyt_ruudut = 0;
         int ruutulaskuri = 0;
         while (true) {
-            try {
-                //Hae piirtämiseen sopivat grafiikat
-                g2d = (Graphics2D) strategia.getDrawGraphics();
-                g2d.setRenderingHints(hints);
-            }
-            catch (IllegalStateException ise) {
-                //joskus bufferi voi tyhjentyä kesken piirtografiikan haun
-                //javan directx-version virhe
-                //jos näin tapahtuu, yritetään vaan uudestaan 
-                System.out.println("Buffer-virhe @" + System.currentTimeMillis() + " (" + ise.getMessage() + ")");
-                continue;
-            }
-            
-            // Lasketaan ruudun päivitysnopeus
-            final long aika_nyt = System.nanoTime();
-            if (aika_nyt - edell_sekunti > 1000000000L) {
-                //jos edellisestä sekuntimerkistä on kulunut yksi sekunti
-                edell_sekunti = aika_nyt;
-                paivitetyt_ruudut = ruutulaskuri;
-                ruutulaskuri = 0;
-            }
-            else ruutulaskuri++;
-            
-            //MUUTTUJAT
-            //ikkunan reunojen koko
-            //Java piirtää JFramen päälle käyttöjärjestelmän ikkunan reunat.
-            //Eli osa pelistä jäisi piirtämättä jollei tätä tehtäisi.
-            final Insets ikkunanreunat = this.getInsets();
-            //ikkunan piirtoalueen sivun mitta
-            final int p_sivux = this.getWidth() - ikkunanreunat.left - ikkunanreunat.right;
-            final int p_sivuy = this.getHeight() - ikkunanreunat.top - ikkunanreunat.bottom;
-            //piirtämisalueen aloituskohta
-            final int p_alkux = 0 + ikkunanreunat.left;
-            final int p_alkuy = 0 + ikkunanreunat.top;
-            //piirtämisalueen keskikohta
-            ikkunan_keskusx = p_alkux + p_sivux / 2d;
-            ikkunan_keskusy = p_alkuy + p_sivuy / 2d;
-            //skaalauskerroin, jotta kuva pysyisi samanlaisena eri kokoisissa ikkunoissa
-            final double p_skaalaus = Math.max(p_sivux, p_sivuy) / Asetukset.ikkunan_oletuskoko;
-            
-            //PIIRTÄMINEN
-            if (nakyma.piirretaankoPeli()) {
-                //pelaajan sijainti
-                final double pelaajax = peli.getPelaajaX();
-                final double pelaajay = peli.getPelaajaY();
-                //Piirrä tausta
-                final int ruutujenmaara = 5;
-                Map<Koord, String> ruutulista = peli.getTaustaRuudut(ruutujenmaara);
-                final double siirtox = peli.getPelaajaSiirtoX();
-                final double siirtoy = peli.getPelaajaSiirtoY();
-                for (Map.Entry<Koord, String> ruutu : ruutulista.entrySet()) {
-                    String s = ruutu.getValue();
-                    if (s == null) continue;
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.kentat, s);
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + ruutu.getKey().getXInt() * Asetukset.ruudun_koko * p_skaalaus - siirtox * Asetukset.ruudun_osa * p_skaalaus, 
-                            ikkunan_keskusy + ruutu.getKey().getYInt() * Asetukset.ruudun_koko * p_skaalaus - siirtoy * Asetukset.ruudun_osa * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    g2d.drawImage(img, aff, null);
-                }
-                //Piirrä kuolleet viholliset
-                for (Map.Entry<KoordSuunnalla, String> v : peli.getKuolleetVihollset(Asetukset.naytettava_alue).entrySet()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, v.getValue());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + (v.getKey().x - pelaajax) * Asetukset.ruudun_osa * p_skaalaus - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy + (v.getKey().y - pelaajay) * Asetukset.ruudun_osa * p_skaalaus - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(v.getKey().suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                }
-                //piirrä "kenttä on ohi, täältä pääset pois" -nuoli
-                if (!peli.onkoVihollisiaJaljella()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, "nuoli");
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy - img.getHeight(null) / 2  * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(Math.atan2(peli.getLopetusAlueY() - pelaajay, peli.getLopetusAlueX() - pelaajax), img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                }
-                //Piirrä tavarat
-                for (Map.Entry<KoordSuunnalla, String> t : peli.getTavarat(Asetukset.naytettava_alue).entrySet()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, t.getValue());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + (t.getKey().x - pelaajax) * Asetukset.ruudun_osa * p_skaalaus - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy + (t.getKey().y - pelaajay) * Asetukset.ruudun_osa * p_skaalaus - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(t.getKey().suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                }
-                //Piirrä ammukset
-                for (Map.Entry<KoordSuunnalla, String> a : peli.getAmmukset(Asetukset.naytettava_alue).entrySet()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, a.getValue());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + (a.getKey().x - pelaajax) * Asetukset.ruudun_osa * p_skaalaus - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy + (a.getKey().y - pelaajay) * Asetukset.ruudun_osa * p_skaalaus - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(a.getKey().suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                }
-                //Piirrä viholliset
-                for (Map.Entry<KoordSuunnalla, String> v : peli.getViholliset(Asetukset.naytettava_alue).entrySet()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, v.getValue());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + (v.getKey().x - pelaajax) * Asetukset.ruudun_osa * p_skaalaus - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy + (v.getKey().y - pelaajay) * Asetukset.ruudun_osa * p_skaalaus - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(v.getKey().suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                }
-                //piirrä vihollisten tavarat {
-                for (Map.Entry<KoordSuunnalla, String> vt : peli.getVihollistenTavarat(Asetukset.naytettava_alue).entrySet()) {
-                    Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, vt.getValue());
-                    AffineTransform aff = new AffineTransform();
-                    aff.translate(
-                            ikkunan_keskusx + (vt.getKey().x - pelaajax) * Asetukset.ruudun_osa * p_skaalaus - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy + (vt.getKey().y - pelaajay) * Asetukset.ruudun_osa * p_skaalaus - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    aff.rotate(vt.getKey().suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
-                    g2d.drawImage(img, aff, null);
-                
-                }
-                //piirrä pelaaja
-                Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getPelaajaTekstuuri());
-                AffineTransform aff = new AffineTransform();
-                aff.rotate(peli.getPelaajaSuunta(), ikkunan_keskusx, ikkunan_keskusy);
-                aff.translate(
-                        ikkunan_keskusx - img.getWidth(null) / 2 * p_skaalaus,
-                        ikkunan_keskusy - img.getHeight(null) / 2 * p_skaalaus);
-                aff.scale(p_skaalaus, p_skaalaus);
-                g2d.drawImage(img, aff, null);
-                //piirrä pelaajan ase TODO: muut varusteet?
-                String s = peli.getAseTekstuuri();
-                if (s != null && peli.onkoPelaajaElossa()) {
-                    img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getAseTekstuuri());
-                    aff = new AffineTransform();
-                    aff.rotate(peli.getPelaajaSuunta(), ikkunan_keskusx, ikkunan_keskusy);
-                    aff.translate(
-                            ikkunan_keskusx - img.getWidth(null) / 2 * p_skaalaus,
-                            ikkunan_keskusy - img.getHeight(null) / 2 * p_skaalaus);
-                    aff.scale(p_skaalaus, p_skaalaus);
-                    g2d.drawImage(img, aff, null);
-                }
-                //himmennetään kuvaa kun peli on loppumassa
-                if (peli.onkoPelaajaLopetusAlueella() && !peli.onkoVihollisiaJaljella()) {
-                    final Rectangle2D pimennys = new Rectangle2D.Double(0, 0, p_alkux + p_sivux, p_alkuy + p_sivuy);
-                    g2d.setColor(new Color(0, 0, 0, (int) (255 * peli.getLopetusPimennys())));
-                    g2d.fill(pimennys);
-                }
-            }
+            do {
+                do {
+                    //Hae piirtämiseen sopivat grafiikat
+                    Graphics2D g2d = (Graphics2D) strategia.getDrawGraphics();
+                    g2d.setRenderingHints(hints);
+
+                    // Lasketaan ruudun päivitysnopeus
+                    final long aika_nyt = System.nanoTime();
+                    if (aika_nyt - edell_sekunti > 1000000000L) {
+                        //jos edellisestä sekuntimerkistä on kulunut yksi sekunti
+                        edell_sekunti = aika_nyt;
+                        paivitetyt_ruudut = ruutulaskuri;
+                        ruutulaskuri = 0;
+                    }
+                    else ruutulaskuri++;
+
+                    //MUUTTUJAT
+                    //ikkunan reunojen koko
+                    //Java piirtää JFramen päälle käyttöjärjestelmän ikkunan reunat.
+                    //Eli osa pelistä jäisi piirtämättä jollei tätä tehtäisi.
+                    final Insets ikkunanreunat = this.getInsets();
+                    //ikkunan piirtoalueen sivun mitta
+                    final int p_sivux = this.getWidth() - ikkunanreunat.left - ikkunanreunat.right;
+                    final int p_sivuy = this.getHeight() - ikkunanreunat.top - ikkunanreunat.bottom;
+                    //piirtämisalueen aloituskohta
+                    final int p_alkux = 0 + ikkunanreunat.left;
+                    final int p_alkuy = 0 + ikkunanreunat.top;
+                    //piirtämisalueen keskikohta
+                    ikkunan_keskusx = p_alkux + p_sivux / 2d;
+                    ikkunan_keskusy = p_alkuy + p_sivuy / 2d;
+                    //skaalauskerroin, jotta kuva pysyisi samanlaisena eri kokoisissa ikkunoissa
+                    final double p_skaalaus = Math.max(p_sivux, p_sivuy) / Asetukset.ikkunan_oletuskoko;
+
+                    //PIIRTÄMINEN
+                    if (nakyma.piirretaankoPeli()) {
+                        piirraPeli(g2d, p_skaalaus, p_alkux, p_alkuy, p_sivux, p_sivuy);
+                    }
+                    else {
+                        piirraValikko(g2d, p_alkux, p_alkuy, p_sivux, p_sivuy);
+                    }
+
+                } while (strategia.contentsRestored());
+                strategia.show();
+            } while (strategia.contentsLost());
             //piirretään valikko
-            else {
-                //muuttujat
-                final double p_vsivux = p_sivuy * 0.5; //valikon sivun mitta
-                final double p_vsivuy = p_sivuy * 0.9;
-                final double p_pohjax = p_alkux + p_sivux / 2 - p_vsivux / 2; //mistä valikko alkaa
-                final double p_pohjay = p_alkuy + p_sivuy * 0.05;
-                val_nappainalkux = p_pohjax; //mistä näppäimet alkaa
-                val_nappainalkuy = p_pohjay + p_vsivuy * 0.27;
-                val_nappainkokox = p_vsivux; //valikon näppäinten koko
-                val_nappainkokoy = p_vsivuy * 0.08;
-                g2d.setColor(Color.red);
-                //piirrä pohja
-                final Rectangle2D pohja = new Rectangle2D.Double(p_pohjax, p_pohjay, p_vsivux, p_vsivuy);
-                g2d.draw(pohja);
-                
+            {
+
                 //piirrä logo
                 Image logo = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, "otsikko");
                 AffineTransform aff = new AffineTransform();
@@ -332,7 +197,7 @@ public class Ikkuna extends JFrame {
                 final double kerroin = p_vsivux / logo.getWidth(null);
                 aff.scale(kerroin, kerroin);
                 g2d.drawImage(logo, aff, null);
-                
+
                 //Piirrä valikon painikkeet
                 for (int i = 0; i < valikko.getPainikeLkm() ; i++) {
                     if (valikko.onkoValittu(i)) {
@@ -368,7 +233,7 @@ public class Ikkuna extends JFrame {
                             (float) (val_nappainalkuy + val_nappainkokoy * 8.9));
                 }
             }
-            
+
             //Piirrä UI
             //Elämät
             if (nakyma.piirretaankoPeli() && peli.onkoPelaajaElossa()) {
@@ -395,7 +260,7 @@ public class Ikkuna extends JFrame {
                     Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getLipasIkoni());
                     AffineTransform aff = new AffineTransform();
                     aff.translate(
-                            p_alkux + p_sivux - 90 - img.getWidth(null) / 2, 
+                            p_alkux + p_sivux - 90 - img.getWidth(null) / 2,
                             p_alkuy + p_sivuy - 50 - img.getHeight(null) / 2);
                     aff.scale(p_skaalaus, p_skaalaus);
                     for (int i = 0; i < lippaatlkm; i++) {
@@ -403,8 +268,8 @@ public class Ikkuna extends JFrame {
                         g2d.drawImage(img, aff, null);
                     }
                     g2d.drawString(
-                             ammuksetlkm + " / " + peli.getAmmustenMaaraMax(), 
-                            (float) (p_alkux + p_sivux - 150 * p_skaalaus),  
+                             ammuksetlkm + " / " + peli.getAmmustenMaaraMax(),
+                            (float) (p_alkux + p_sivux - 150 * p_skaalaus),
                             (float) (p_alkuy + p_sivuy - 40 * p_skaalaus));
                 }
             }
@@ -416,7 +281,7 @@ public class Ikkuna extends JFrame {
                         p_alkux + p_sivux * 0.2f,
                         p_alkuy + p_sivuy * 0.9f);
             }
-            
+
             g2d.setColor(Color.RED);
             g2d.setFont(new Font("Monospaced", Font.BOLD, 16));
             //Lyöntialueen visuaalinen testi
@@ -435,8 +300,8 @@ public class Ikkuna extends JFrame {
             if (Asetukset.piirra_sijainti && nakyma.piirretaankoPeli()){
                 g2d.drawString(String.format("X=%f Y=%f", peli.getPelaajaX(), peli.getPelaajaY()), 50, 70);
             }
-            
-            
+
+
             //piirtäminen valmista, heitetään piirtämisjuttu roskiin ja näytetään lopputulos
             g2d.dispose();
             try {
@@ -446,7 +311,7 @@ public class Ikkuna extends JFrame {
                 System.out.println("Buffer-näyttövirhe @ " + System.currentTimeMillis() + " (" + ise.getMessage() + ")");
                 continue;
             }
-            
+
             //odotetaan hetki ennen seuraavaa päivitystä, jottei prosessorinkäyttö nouse liikaa
             if (Asetukset.rajoita_paivitysnopeutta) {
                 try {
@@ -458,6 +323,140 @@ public class Ikkuna extends JFrame {
             }
         }
     }
+
+    private BufferStrategy luoBufferointiStrategia(BufferCapabilities bufcap) {
+        int i = 0;
+        while(true) {
+            try {
+                //tehdään edellisten capabilities-määritelmän mukainen strategia
+                SwingUtilities.invokeAndWait(() -> {
+                    try {
+                        this.createBufferStrategy(2, bufcap);
+                    } catch (AWTException ex) {
+                        //Yritetään uudestaan
+                    }
+                });
+                break;
+            } catch (IllegalStateException | InvocationTargetException | InterruptedException ex) {
+                //kiihdytys ei jostain syystä onnistunut
+                //yritetään uudestaan
+                System.out.println("Kiihdytys ei onnistunut! " + ex.getMessage());
+                if (i > 30) throw new ExceptionInInitializerError("Buffereiden luominen ei onnistunut ollenkaan!");
+            }
+        }
+        //palautetaan äsken luotu strategia
+        return this.getBufferStrategy();
+    }
+
+    private void piirraPeli(Graphics2D g2d, double skaalaus, double alkux, double alkuy, double sivux, double sivuy) {
+        //pelaajan sijainti
+        final double pelaajax = peli.getPelaajaX();
+        final double pelaajay = peli.getPelaajaY();
+        //Piirrä tausta
+        final int ruutujenMaara = 5;
+        piirraTausta(ruutujenMaara, g2d, skaalaus);
+
+        //Consumer muuttujana, jottei tätä tarvitsisi toistaa joka välissä
+        final Consumer<Map.Entry<KoordSuunnalla, String>> haeJaPiirra = (x) -> {
+            Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, x.getValue());
+            piirraGrafiikka(g2d, img, x.getKey().x, x.getKey().y, x.getKey().suunta, pelaajax, pelaajay, skaalaus);
+        };
+
+        //Piirrä kuolleet viholliset
+        peli.getKuolleetVihollset(Asetukset.naytettava_alue).entrySet().forEach(haeJaPiirra);
+        //piirrä "kenttä on ohi, täältä pääset pois" -nuoli
+        if (!peli.onkoVihollisiaJaljella()) {
+            Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, "nuoli");
+            AffineTransform aff = new AffineTransform();
+            aff.translate(
+                    ikkunan_keskusx - img.getWidth(null) / 2 * skaalaus,
+                    ikkunan_keskusy - img.getHeight(null) / 2  * skaalaus);
+            aff.scale(skaalaus, skaalaus);
+            aff.rotate(Math.atan2(peli.getLopetusAlueY() - pelaajay, peli.getLopetusAlueX() - pelaajax), img.getWidth(null) / 2, img.getHeight(null) / 2);
+            g2d.drawImage(img, aff, null);
+        }
+        //Piirrä tavarat
+        peli.getTavarat(Asetukset.naytettava_alue).entrySet().forEach(haeJaPiirra);
+        //Piirrä ammukset
+        peli.getAmmukset(Asetukset.naytettava_alue).entrySet().forEach(haeJaPiirra);
+        //Piirrä viholliset
+        peli.getViholliset(Asetukset.naytettava_alue).entrySet().forEach(haeJaPiirra);
+        //piirrä vihollisten tavarat
+        peli.getVihollistenTavarat(Asetukset.naytettava_alue).entrySet().forEach(haeJaPiirra);
+        //piirrä pelaaja
+        Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getPelaajaTekstuuri());
+        AffineTransform aff = new AffineTransform();
+        aff.rotate(peli.getPelaajaSuunta(), ikkunan_keskusx, ikkunan_keskusy);
+        aff.translate(
+                ikkunan_keskusx - img.getWidth(null) / 2 * skaalaus,
+                ikkunan_keskusy - img.getHeight(null) / 2 * skaalaus);
+        aff.scale(skaalaus, skaalaus);
+        g2d.drawImage(img, aff, null);
+        //piirrä pelaajan ase
+        if (peli.onkoPelaajaElossa()) {
+            String s = peli.getAseTekstuuri();
+            if (s != null) {
+                img = TekstuuriVarasto.haeTekstuuri(Tyyppi.yleinen, peli.getAseTekstuuri());
+                aff = new AffineTransform();
+                aff.rotate(peli.getPelaajaSuunta(), ikkunan_keskusx, ikkunan_keskusy);
+                aff.translate(
+                        ikkunan_keskusx - img.getWidth(null) / 2 * skaalaus,
+                        ikkunan_keskusy - img.getHeight(null) / 2 * skaalaus);
+                aff.scale(skaalaus, skaalaus);
+                g2d.drawImage(img, aff, null);
+            }
+        }
+        //himmennetään kuvaa kun peli on loppumassa
+        if (peli.onkoPelaajaLopetusAlueella() && !peli.onkoVihollisiaJaljella()) {
+            final Rectangle2D pimennys = new Rectangle2D.Double(0, 0, alkux + sivux, alkuy + sivuy);
+            g2d.setColor(new Color(0, 0, 0, (int) (255 * peli.getLopetusPimennys())));
+            g2d.fill(pimennys);
+        }
+    }
+
+    private void piirraTausta(int ruutujenMaara, Graphics2D g2d, double skaalaus) {
+        final double siirtox = peli.getPelaajaSiirtoX();
+        final double siirtoy = peli.getPelaajaSiirtoY();
+        peli.getTaustaRuudut(ruutujenMaara).entrySet().stream()
+            .filter(x -> x.getValue() != null).forEach((ruutu) -> {
+                String s = ruutu.getValue();
+                Image img = TekstuuriVarasto.haeTekstuuri(Tyyppi.kentat, s);
+                AffineTransform aff = new AffineTransform();
+                aff.translate(
+                        ikkunan_keskusx + ruutu.getKey().getXInt() * Asetukset.ruudun_koko * skaalaus - siirtox * Asetukset.ruudun_osa * skaalaus,
+                        ikkunan_keskusy + ruutu.getKey().getYInt() * Asetukset.ruudun_koko * skaalaus - siirtoy * Asetukset.ruudun_osa * skaalaus);
+                aff.scale(skaalaus, skaalaus);
+                g2d.drawImage(img, aff, null);
+            }
+        );
+    }
+
+    private void piirraGrafiikka(Graphics2D g2d, Image img, double x, double y, double suunta, double pelaajax, double pelaajay, double skaalaus) {
+        AffineTransform aff = new AffineTransform();
+        aff.translate(
+            ikkunan_keskusx + (x - pelaajax) * Asetukset.ruudun_osa * skaalaus - img.getWidth(null) / 2 * skaalaus,
+            ikkunan_keskusy + (y - pelaajay) * Asetukset.ruudun_osa * skaalaus - img.getHeight(null) / 2 * skaalaus);
+        aff.scale(skaalaus, skaalaus);
+        aff.rotate(suunta, img.getWidth(null) / 2, img.getHeight(null) / 2);
+        g2d.drawImage(img, aff, null);
+    }
+
+    private void piirraValikko(Graphics2D g2d, int p_alkux, int p_alkuy, int p_sivux, int p_sivuy) {
+        //muuttujat
+        final double p_vsivux = p_sivuy * 0.5; //valikon sivun mitta
+        final double p_vsivuy = p_sivuy * 0.9;
+        final double p_pohjax = p_alkux + p_sivux / 2 - p_vsivux / 2; //mistä valikko alkaa
+        final double p_pohjay = p_alkuy + p_sivuy * 0.05;
+        val_nappainalkux = p_pohjax; //mistä näppäimet alkaa
+        val_nappainalkuy = p_pohjay + p_vsivuy * 0.27;
+        val_nappainkokox = p_vsivux; //valikon näppäinten koko
+        val_nappainkokoy = p_vsivuy * 0.08;
+        g2d.setColor(Color.red);
+        //piirrä pohja
+        final Rectangle2D pohja = new Rectangle2D.Double(p_pohjax, p_pohjay, p_vsivux, p_vsivuy);
+        g2d.draw(pohja);
+    }
+
     private int liikkeen_paivitysnopeus = 0;
     @SuppressWarnings("SleepWhileInLoop")
     private void liikeLoop() {
@@ -483,10 +482,10 @@ public class Ikkuna extends JFrame {
                 if (hiiri != null) {
                     final int hiirix = hiiri.x;
                     final int hiiriy = hiiri.y;
-                    
+
                     //Jos hiiri on valikkkoalueen sisällä
-                    if (hiirix > val_nappainalkux 
-                            && hiiriy > val_nappainalkuy 
+                    if (hiirix > val_nappainalkux
+                            && hiiriy > val_nappainalkuy
                             && hiirix < val_nappainalkux + val_nappainkokox ) {
                         //laske mitä painiketta painetaan
                         final double painettu_nappain = (hiiriy - val_nappainalkuy) / val_nappainkokoy;
@@ -500,7 +499,7 @@ public class Ikkuna extends JFrame {
                     }
                     //hanki jostain tiedot siitä mitkä näppäinalueen reunat on
                     //jos hiiri on niiden sisällä -> laske monesko näppäin
-                    //muuta tulos intiksi ja pistä se valikkoon   
+                    //muuta tulos intiksi ja pistä se valikkoon
                 }
                 //Katsotaan näppäinpainallukset
                 if (li_pyorahda || li_ammu) {
@@ -520,7 +519,7 @@ public class Ikkuna extends JFrame {
                             nakyma = IkkunanNakyma.peli_nakyvissa;
                         }
                     }
-                } 
+                }
                 else if (li_valikko) {
                     if (valikko.voikoPalataTaakse()) {
                         valikko.palaaTakaisin();
@@ -535,7 +534,7 @@ public class Ikkuna extends JFrame {
                     }
                     if (li_alas) {
                         valikko.liikutaValintaa(1);
-                    } 
+                    }
                 }
                 nollaaMuuttujat();
             }
@@ -569,7 +568,7 @@ public class Ikkuna extends JFrame {
                     peli.liikutaPelaajaa(liikex, liikey, siirtyma);
                 }
                 peli.paivita(siirtyma);
-                peli.liikutaAmmuksia(siirtyma);    
+                peli.liikutaAmmuksia(siirtyma);
                 //tarkastetaan onko pelaaja lopetusalueella ja onko vihollisia jäljellä
                 if (!peli.onkoVihollisiaJaljella() && peli.onkoPelaajaLopetusAlueella()) {
                     //jos pimennys on valmis, siirry takaisin valikkoon
@@ -608,7 +607,7 @@ public class Ikkuna extends JFrame {
                 li_lataa = false;
                 peli.aloitaAlusta();
             }
-            
+
             //Rajoitetaan päivittämistä, jottei prosessorinkäyttö nouse liikaa
             try {
                 Thread.sleep(Asetukset.paivitysnopeuden_rajoitin);
@@ -696,7 +695,7 @@ public class Ikkuna extends JFrame {
             if (e.getButton() == MouseEvent.BUTTON1) li_ammu = false;
         }
     }
-    
+
     /** Käynnistää uuden pelin.
      * @param args "-edit" avaa kenttäeditorin, "-nogl" poistaa opengl:n käytöstä. */
     public static void main(String[] args) {
